@@ -1,4 +1,4 @@
-BINARY := cherry-pick
+BINARY := berrypick
 
 .PHONY: build install test vet tidy clean
 

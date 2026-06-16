@@ -1,4 +1,4 @@
-module github.com/fverse/cherry-pick
+module github.com/fverse/berrypick
 
 go 1.25
 

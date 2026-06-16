@@ -1,4 +1,4 @@
-# cherry-pick
+# berrypick
 
 A small CLI that cherry-picks commits from a **commit hash** or a **GitHub Pull
 Request** onto a fresh branch created off a target branch.
@@ -6,17 +6,17 @@ Request** onto a fresh branch created off a target branch.
 ## Usage
 
 ```
-cherry-pick <commit-hash | PR-url> <target-branch> [flags]
+berrypick <commit-hash | PR-url> <target-branch> [flags]
 ```
 
 ### Examples
 
 ```sh
 # Cherry-pick a single commit onto a new branch off release/1.2
-cherry-pick a1b2c3d4e5f6 release/1.2
+berrypick a1b2c3d4e5f6 release/1.2
 
 # Cherry-pick every commit in PR #123 onto a new branch off main, then push
-cherry-pick https://github.com/owner/repo/pull/123 main --push
+berrypick https://github.com/owner/repo/pull/123 main --push
 ```
 
 ### Flags
@@ -55,7 +55,7 @@ All failures exit with a non-zero status code.
 ## Build
 
 ```sh
-go build -o cherry-pick .
+go build -o berrypick .
 # or
 make build
 ```
@@ -63,10 +63,10 @@ make build
 ## Install
 
 ```sh
-go install github.com/fawazabdulla/cherry-pick@latest
+go install github.com/fverse/berrypick@latest
 # or, from a clone:
 make install
 ```
 
-This places the `cherry-pick` binary in `$(go env GOPATH)/bin` — make sure that
+This places the `berrypick` binary in `$(go env GOPATH)/bin` — make sure that
 directory is on your `PATH`.

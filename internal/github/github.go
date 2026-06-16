@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/fverse/cherry-pick/internal/parse"
+	"github.com/fverse/berrypick/internal/parse"
 )
 
 // Commit is a single commit in a pull request.
@@ -150,7 +150,7 @@ func (r *restResolver) getJSON(url, token string, dst any) error {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "cherry-pick-cli")
+	req.Header.Set("User-Agent", "berrypick-cli")
 
 	resp, err := r.client.Do(req)
 	if err != nil {

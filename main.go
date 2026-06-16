@@ -1,4 +1,4 @@
-// Command cherry-pick cherry-picks commits from a commit hash or a GitHub pull
+// Command berrypick cherry-picks commits from a commit hash or a GitHub pull
 // request onto a fresh branch created off a target branch.
 package main
 
@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/fverse/cherry-pick/internal/git"
-	"github.com/fverse/cherry-pick/internal/github"
-	"github.com/fverse/cherry-pick/internal/parse"
+	"github.com/fverse/berrypick/internal/git"
+	"github.com/fverse/berrypick/internal/github"
+	"github.com/fverse/berrypick/internal/parse"
 	"github.com/spf13/cobra"
 )
 
@@ -28,9 +28,9 @@ func newRootCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "cherry-pick <commit-hash | PR-url> <target-branch>",
+		Use:   "berrypick <commit-hash | PR-url> <target-branch>",
 		Short: "Cherry-pick commits from a commit or GitHub PR onto a new branch",
-		Long: `cherry-pick creates a branch off <target-branch> and cherry-picks the
+		Long: `berrypick creates a branch off <target-branch> and cherry-picks the
 requested work onto it.
 
 The first argument is either a git commit hash (full or abbreviated) or a
@@ -39,8 +39,8 @@ every commit in the PR is cherry-picked individually, in chronological order.
 
 The new branch is named cherry-pick/<first 8 chars of the SHA>, where the SHA is
 the commit hash for a commit, or the PR's HEAD (tip) commit SHA for a PR.`,
-		Example: `  cherry-pick a1b2c3d4e5f6 release/1.2
-  cherry-pick https://github.com/owner/repo/pull/123 main`,
+		Example: `  berrypick a1b2c3d4e5f6 release/1.2
+  berrypick https://github.com/owner/repo/pull/123 main`,
 		Args:          cobra.ExactArgs(2),
 		SilenceUsage:  true,
 		SilenceErrors: true,

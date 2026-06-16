@@ -79,12 +79,17 @@ func ResolveCommit(ref string) (string, error) {
 
 // CreateBranch creates branch at startPoint and checks it out. When force is
 // true an existing branch of the same name is reset to startPoint.
+//
+// --no-track is essential: startPoint is a remote-tracking ref (origin/<target>)
+// and git would otherwise set the new branch's upstream to it. A later plain
+// "git push" under push.default=upstream/tracking would then push onto the
+// target branch (e.g. production) instead of the cherry-pick branch.
 func CreateBranch(name, startPoint string, force bool) error {
 	flag := "-b"
 	if force {
 		flag = "-B"
 	}
-	return run("checkout", flag, name, startPoint)
+	return run("checkout", "--no-track", flag, name, startPoint)
 }
 
 // CherryPick applies a single commit onto the current branch. When mainline is

@@ -103,25 +103,33 @@ func run(sourceArg, targetBranch string, opts options) error {
 
 	branch := parse.BranchName(nameSHA)
 
-	// Make sure the target branch exists on the remote before touching anything.
-	exists, err := git.RemoteBranchExists(remote, targetBranch)
-	if err != nil {
-		return fmt.Errorf("checking %s/%s: %w", remote, targetBranch, err)
-	}
-	if !exists {
-		return fmt.Errorf("branch %q does not exist on %s", targetBranch, remote)
-	}
-
 	if git.LocalBranchExists(branch) && !opts.force {
 		return fmt.Errorf("branch %q already exists; pass --force to recreate it", branch)
 	}
 
-	fmt.Printf("Fetching %s/%s...\n", remote, targetBranch)
-	if err := git.Fetch(remote, targetBranch); err != nil {
-		return err
+	// Decide where to branch from. Prefer the remote target, fetched fresh so we
+	// build on the latest; otherwise fall back to a local-only branch of the same
+	// name and warn later that it isn't on origin yet.
+	targetOnOrigin, err := git.RemoteBranchExists(remote, targetBranch)
+	if err != nil {
+		return fmt.Errorf("checking %s/%s: %w", remote, targetBranch, err)
 	}
 
-	startPoint := remote + "/" + targetBranch
+	var startPoint string
+	switch {
+	case targetOnOrigin:
+		fmt.Printf("Fetching %s/%s...\n", remote, targetBranch)
+		if err := git.Fetch(remote, targetBranch); err != nil {
+			return err
+		}
+		startPoint = remote + "/" + targetBranch
+	case git.LocalBranchExists(targetBranch):
+		startPoint = targetBranch
+		fmt.Printf("%s/%s not found; branching from your local %q instead.\n", remote, targetBranch, targetBranch)
+	default:
+		return fmt.Errorf("branch %q does not exist on %s or locally", targetBranch, remote)
+	}
+
 	fmt.Printf("Creating branch %q from %s...\n", branch, startPoint)
 	if err := git.CreateBranch(branch, startPoint, opts.force); err != nil {
 		return err
@@ -170,7 +178,7 @@ func run(sourceArg, targetBranch string, opts options) error {
 		}
 	}
 
-	printSummary(branch, targetBranch, commits, opts.push, prURL)
+	printSummary(branch, targetBranch, commits, opts.push, targetOnOrigin, prURL)
 	return nil
 }
 
@@ -185,10 +193,10 @@ output above for the reason). To proceed:
   - To undo and return to the previous state:     git cherry-pick --abort`)
 }
 
-func printSummary(branch, target string, commits []github.Commit, pushed bool, prURL string) {
+func printSummary(branch, target string, commits []github.Commit, pushed, targetOnOrigin bool, prURL string) {
 	fmt.Println()
 	fmt.Println(green("✓ Done."))
-	fmt.Printf("  Branch:        %s (off %s/%s)\n", branch, remote, target)
+	fmt.Printf("  Branch:        %s (off %s)\n", branch, baseLabel(target, targetOnOrigin))
 	fmt.Printf("  Commits:       %d applied\n", len(commits))
 	for _, c := range commits {
 		if c.Subject != "" {
@@ -200,6 +208,13 @@ func printSummary(branch, target string, commits []github.Commit, pushed bool, p
 
 	fmt.Println()
 	fmt.Println("Next steps:")
+
+	// The base branch must exist on origin for a PR to be openable.
+	if !targetOnOrigin {
+		fmt.Println(warn(fmt.Sprintf("  warning: base branch %q is not on %s yet — push it first so the PR has a base:", target, remote)))
+		fmt.Printf("    git push --set-upstream %s %s\n", remote, target)
+	}
+
 	if pushed {
 		fmt.Printf("  Branch pushed to %s. Open a PR:\n", remote)
 	} else {
@@ -214,6 +229,13 @@ func printSummary(branch, target string, commits []github.Commit, pushed bool, p
 	}
 }
 
+func baseLabel(target string, onOrigin bool) string {
+	if onOrigin {
+		return remote + "/" + target
+	}
+	return "local " + target
+}
+
 // colorize wraps s in the given ANSI SGR code, but only when stdout is a
 // terminal and NO_COLOR is unset, so piped or redirected output stays clean.
 func colorize(code, s string) string {
@@ -226,10 +248,11 @@ func colorize(code, s string) string {
 	return "\033[" + code + "m" + s + "\033[0m"
 }
 
-// green is used for the success marker; link is bold cyan to make the
-// PR-creation URL stand out.
+// green marks success; link is bold cyan so the PR-creation URL stands out;
+// warn is yellow for advisory notices.
 func green(s string) string { return colorize("32", s) }
 func link(s string) string  { return colorize("1;36", s) }
+func warn(s string) string  { return colorize("33", s) }
 
 func short(sha string) string {
 	if len(sha) > 8 {

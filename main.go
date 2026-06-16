@@ -42,10 +42,17 @@ The new branch is named cherry-pick/<first 8 chars of the SHA>, where the SHA is
 the commit hash for a commit, or the PR's HEAD (tip) commit SHA for a PR.`,
 		Example: `  berrypick a1b2c3d4e5f6 release/1.2
   berrypick https://github.com/owner/repo/pull/123 main`,
-		Args:          cobra.ExactArgs(2),
+		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// No arguments: show full help instead of a bare arg-count error.
+			if len(args) == 0 {
+				return cmd.Help()
+			}
+			if len(args) != 2 {
+				return fmt.Errorf("expected exactly 2 arguments, <commit-hash | PR-url> and <target-branch>, but got %d; run with --help for usage", len(args))
+			}
 			return run(args[0], args[1], options{push: push, force: force, mainline: mainline})
 		},
 	}

@@ -23,8 +23,9 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	var (
-		push  bool
-		force bool
+		push     bool
+		force    bool
+		mainline int
 	)
 
 	cmd := &cobra.Command{
@@ -45,18 +46,20 @@ the commit hash for a commit, or the PR's HEAD (tip) commit SHA for a PR.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(args[0], args[1], options{push: push, force: force})
+			return run(args[0], args[1], options{push: push, force: force, mainline: mainline})
 		},
 	}
 
 	cmd.Flags().BoolVar(&push, "push", false, "push the new branch to origin after a successful cherry-pick")
 	cmd.Flags().BoolVar(&force, "force", false, "recreate the branch if it already exists")
+	cmd.Flags().IntVarP(&mainline, "mainline", "m", 0, "parent number (1-based) to follow when cherry-picking a merge commit")
 	return cmd
 }
 
 type options struct {
-	push  bool
-	force bool
+	push     bool
+	force    bool
+	mainline int
 }
 
 func run(sourceArg, targetBranch string, opts options) error {
@@ -126,13 +129,28 @@ func run(sourceArg, targetBranch string, opts options) error {
 
 	// Apply each commit in order. On conflict, stop and explain how to recover.
 	for i, c := range commits {
+		// Merge commits can't be cherry-picked without telling git which parent
+		// is the mainline. Detect this up front and give actionable guidance
+		// rather than letting git fail with a cryptic error.
+		parents, err := git.ParentCount(c.SHA)
+		if err != nil {
+			return err
+		}
+		if parents > 1 && opts.mainline == 0 {
+			return fmt.Errorf("%s is a merge commit (%d parents); re-run with --mainline <n> to pick the diff relative to one parent (usually --mainline 1)", short(c.SHA), parents)
+		}
+
 		label := c.SHA
 		if c.Subject != "" {
 			label = fmt.Sprintf("%s %s", short(c.SHA), c.Subject)
 		}
 		fmt.Printf("Cherry-picking [%d/%d] %s\n", i+1, len(commits), label)
-		if err := git.CherryPick(c.SHA); err != nil {
-			printConflictHelp()
+		if err := git.CherryPick(c.SHA, opts.mainline); err != nil {
+			// Only show conflict-resolution steps if git actually stopped on a
+			// conflict; other failures already printed their own reason.
+			if git.InProgress() {
+				printConflictHelp()
+			}
 			return fmt.Errorf("cherry-pick failed on %s", short(c.SHA))
 		}
 	}
@@ -150,16 +168,13 @@ func run(sourceArg, targetBranch string, opts options) error {
 
 func printConflictHelp() {
 	fmt.Fprintln(os.Stderr, `
-Cherry-pick stopped due to a conflict. The repository has been left in the
-conflicted state. To proceed:
+The cherry-pick stopped and the repository is paused mid-operation (see git's
+output above for the reason). To proceed:
 
-  1. Resolve the conflicts in the listed files.
-  2. Stage them:           git add <files>
-  3. Continue:             git cherry-pick --continue
-
-Or, to undo and return to the previous state:
-
-  git cherry-pick --abort`)
+  - If there are conflicts, resolve them, then:   git add <files>
+    and continue:                                 git cherry-pick --continue
+  - To skip this commit:                          git cherry-pick --skip
+  - To undo and return to the previous state:     git cherry-pick --abort`)
 }
 
 func printSummary(branch, target string, commits []github.Commit, pushed bool) {

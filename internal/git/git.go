@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -86,9 +87,38 @@ func CreateBranch(name, startPoint string, force bool) error {
 	return run("checkout", flag, name, startPoint)
 }
 
-// CherryPick applies a single commit onto the current branch.
-func CherryPick(sha string) error {
-	return run("cherry-pick", sha)
+// CherryPick applies a single commit onto the current branch. When mainline is
+// greater than zero it is passed as git's -m option, which is required (and only
+// valid) when cherry-picking a merge commit.
+func CherryPick(sha string, mainline int) error {
+	args := []string{"cherry-pick"}
+	if mainline > 0 {
+		args = append(args, "-m", strconv.Itoa(mainline))
+	}
+	args = append(args, sha)
+	return run(args...)
+}
+
+// ParentCount returns the number of parent commits of sha. A result greater
+// than one indicates a merge commit.
+func ParentCount(sha string) (int, error) {
+	// "<commit> <parent1> [<parent2> ...]"
+	out, err := output("rev-list", "--parents", "-n", "1", sha)
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return 0, fmt.Errorf("could not determine parents of %s", sha)
+	}
+	return len(fields) - 1, nil
+}
+
+// InProgress reports whether a cherry-pick is currently in progress (i.e. the
+// last attempt stopped on a conflict, leaving CHERRY_PICK_HEAD behind).
+func InProgress() bool {
+	_, err := output("rev-parse", "--verify", "--quiet", "CHERRY_PICK_HEAD")
+	return err == nil
 }
 
 // Push pushes branch to remote, setting upstream.

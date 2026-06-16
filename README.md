@@ -21,11 +21,22 @@ berrypick https://github.com/owner/repo/pull/123 main --push
 
 ### Flags
 
-| Flag           | Description                                                     |
-| -------------- | --------------------------------------------------------------- |
-| `--push`       | Push the new branch to `origin` after a successful cherry-pick. |
-| `--force`      | Recreate the working branch if it already exists.               |
-| `-h`, `--help` | Show help.                                                      |
+| Flag                 | Description                                                                             |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| `--push`             | Push the new branch to `origin` after a successful cherry-pick.                         |
+| `--force`            | Recreate the working branch if it already exists.                                       |
+| `-m`, `--mainline N` | Parent number (1-based) to follow when cherry-picking a **merge commit** (e.g. `-m 1`). |
+| `-h`, `--help`       | Show help.                                                                              |
+
+### Merge commits
+
+A merge commit has more than one parent, so git needs to know which side to
+treat as the mainline. `berrypick` detects this and stops with guidance; re-run
+with `-m 1` (usually the target-branch parent) to cherry-pick it:
+
+```sh
+berrypick -m 1 9f1e5d1b2622d3538a0589ac2d76758b551a1340 dev
+```
 
 ## GitHub access
 

@@ -112,6 +112,49 @@ func TestBranchName(t *testing.T) {
 	}
 }
 
+func TestRemoteURL(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want Repo
+	}{
+		{"https", "https://github.com/owner/repo.git", Repo{Host: "github.com", Owner: "owner", Name: "repo"}},
+		{"https no .git", "https://github.com/owner/repo", Repo{Host: "github.com", Owner: "owner", Name: "repo"}},
+		{"scp-like", "git@github.com:owner/repo.git", Repo{Host: "github.com", Owner: "owner", Name: "repo"}},
+		{"ssh url", "ssh://git@github.com/owner/repo.git", Repo{Host: "github.com", Owner: "owner", Name: "repo"}},
+		{"enterprise scp", "git@ghe.example.com:team/svc.git", Repo{Host: "ghe.example.com", Owner: "team", Name: "svc"}},
+		{"nested group", "https://gitlab.example.com/group/sub/repo.git", Repo{Host: "gitlab.example.com", Owner: "group/sub", Name: "repo"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := RemoteURL(tc.in)
+			if err != nil {
+				t.Fatalf("RemoteURL(%q) unexpected error: %v", tc.in, err)
+			}
+			if got != tc.want {
+				t.Errorf("RemoteURL(%q) = %+v, want %+v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRemoteURLInvalid(t *testing.T) {
+	for _, in := range []string{"", "   ", "not-a-url", "https://github.com/owner"} {
+		if _, err := RemoteURL(in); err == nil {
+			t.Errorf("RemoteURL(%q) expected error, got nil", in)
+		}
+	}
+}
+
+func TestCompareURL(t *testing.T) {
+	r := Repo{Host: "github.com", Owner: "owner", Name: "repo"}
+	got := r.CompareURL("staging", "cherry-pick/98f40d37")
+	want := "https://github.com/owner/repo/compare/staging...cherry-pick/98f40d37?expand=1"
+	if got != want {
+		t.Errorf("CompareURL = %q, want %q", got, want)
+	}
+}
+
 func TestSlug(t *testing.T) {
 	p := PRRef{Owner: "owner", Repo: "repo"}
 	if got := p.Slug(); got != "owner/repo" {

@@ -162,7 +162,15 @@ func run(sourceArg, targetBranch string, opts options) error {
 		}
 	}
 
-	printSummary(branch, targetBranch, commits, opts.push)
+	// Best-effort: build the web PR-creation link from the origin remote.
+	prURL := ""
+	if u, err := git.RemoteURL(remote); err == nil {
+		if repo, err := parse.RemoteURL(u); err == nil {
+			prURL = repo.CompareURL(targetBranch, branch)
+		}
+	}
+
+	printSummary(branch, targetBranch, commits, opts.push, prURL)
 	return nil
 }
 
@@ -177,7 +185,7 @@ output above for the reason). To proceed:
   - To undo and return to the previous state:     git cherry-pick --abort`)
 }
 
-func printSummary(branch, target string, commits []github.Commit, pushed bool) {
+func printSummary(branch, target string, commits []github.Commit, pushed bool, prURL string) {
 	fmt.Println()
 	fmt.Println(green("✓ Done."))
 	fmt.Printf("  Branch:        %s (off %s/%s)\n", branch, remote, target)
@@ -193,26 +201,35 @@ func printSummary(branch, target string, commits []github.Commit, pushed bool) {
 	fmt.Println()
 	fmt.Println("Next steps:")
 	if pushed {
-		fmt.Printf("  Branch pushed to %s. Open a PR with:\n", remote)
-		fmt.Printf("    gh pr create --base %s --head %s\n", target, branch)
+		fmt.Printf("  Branch pushed to %s. Open a PR:\n", remote)
 	} else {
-		fmt.Println("  Push the branch and open a PR:")
+		fmt.Println("  Push the branch, then open a PR:")
 		fmt.Printf("    git push --set-upstream %s %s\n", remote, branch)
+	}
+	if prURL != "" {
+		fmt.Printf("    %s\n", link(prURL))
+	} else {
+		// Fall back to the gh command when the remote can't be parsed.
 		fmt.Printf("    gh pr create --base %s --head %s\n", target, branch)
 	}
 }
 
-// green wraps s in ANSI green, but only when stdout is a terminal and NO_COLOR
-// is unset, so piped or redirected output stays clean.
-func green(s string) string {
+// colorize wraps s in the given ANSI SGR code, but only when stdout is a
+// terminal and NO_COLOR is unset, so piped or redirected output stays clean.
+func colorize(code, s string) string {
 	if os.Getenv("NO_COLOR") != "" {
 		return s
 	}
 	if info, err := os.Stdout.Stat(); err != nil || info.Mode()&os.ModeCharDevice == 0 {
 		return s
 	}
-	return "\033[32m" + s + "\033[0m"
+	return "\033[" + code + "m" + s + "\033[0m"
 }
+
+// green is used for the success marker; link is bold cyan to make the
+// PR-creation URL stand out.
+func green(s string) string { return colorize("32", s) }
+func link(s string) string  { return colorize("1;36", s) }
 
 func short(sha string) string {
 	if len(sha) > 8 {

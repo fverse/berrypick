@@ -126,6 +126,11 @@ func InProgress() bool {
 	return err == nil
 }
 
+// RemoteURL returns the configured URL of the given remote.
+func RemoteURL(remote string) (string, error) {
+	return output("remote", "get-url", remote)
+}
+
 // Push pushes branch to remote, setting upstream.
 func Push(remote, branch string) error {
 	return run("push", "--set-upstream", remote, branch)

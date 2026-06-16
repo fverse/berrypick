@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -14,9 +15,15 @@ import (
 
 const remote = "origin"
 
+// errReported signals that the error was already printed (e.g. an arg error
+// shown above the help), so main should just exit non-zero without printing it.
+var errReported = errors.New("error already reported")
+
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		if !errors.Is(err, errReported) {
+			fmt.Fprintln(os.Stderr, "error:", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -41,18 +48,18 @@ every commit in the PR is cherry-picked individually, in chronological order.
 
 The new branch is named cherry-pick/<first 8 chars of the SHA>, where the SHA is
 the commit hash for a commit, or the PR's HEAD (tip) commit SHA for a PR.`,
-		Example: `  berrypick a1b2c3d4e5f6 release/1.2
-  berrypick https://github.com/owner/repo/pull/123 main`,
+		Example:       `  berrypick a1b2c3d4e5f6 release/1.2`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// No arguments: show full help instead of a bare arg-count error.
-			if len(args) == 0 {
-				return cmd.Help()
-			}
+			// Wrong number of arguments: print the error first, then usage,
+			// examples and flags (cmd.Usage omits the long description).
 			if len(args) != 2 {
-				return fmt.Errorf("expected exactly 2 arguments, <commit-hash | PR-url> and <target-branch>, but got %d; run with --help for usage", len(args))
+				fmt.Fprintln(os.Stderr, red(fmt.Sprintf("error: requires 2 arguments: <commit-hash | PR-url> <target-branch> (got %d)", len(args))))
+				fmt.Fprintln(os.Stderr)
+				_ = cmd.Usage()
+				return errReported
 			}
 			if deleteLocal && !push {
 				return fmt.Errorf("--delete-local requires --push (the local branch is only deleted after a successful push)")
@@ -276,23 +283,26 @@ func baseLabel(target string, onOrigin bool) string {
 	return "local " + target
 }
 
-// colorize wraps s in the given ANSI SGR code, but only when stdout is a
-// terminal and NO_COLOR is unset, so piped or redirected output stays clean.
-func colorize(code, s string) string {
+// colorizeStream wraps s in the given ANSI SGR code, but only when the target
+// stream is a terminal and NO_COLOR is unset, so piped or redirected output
+// stays clean.
+func colorizeStream(f *os.File, code, s string) string {
 	if os.Getenv("NO_COLOR") != "" {
 		return s
 	}
-	if info, err := os.Stdout.Stat(); err != nil || info.Mode()&os.ModeCharDevice == 0 {
+	if info, err := f.Stat(); err != nil || info.Mode()&os.ModeCharDevice == 0 {
 		return s
 	}
 	return "\033[" + code + "m" + s + "\033[0m"
 }
 
-// green marks success; link is bold cyan so the PR-creation URL stands out;
-// warn is yellow for advisory notices.
-func green(s string) string { return colorize("32", s) }
-func link(s string) string  { return colorize("1;36", s) }
-func warn(s string) string  { return colorize("33", s) }
+// green marks success; link is bold cyan;
+// warn is yellow. These print to stdout. red is for errors
+// on stderr.
+func green(s string) string { return colorizeStream(os.Stdout, "32", s) }
+func link(s string) string  { return colorizeStream(os.Stdout, "1;36", s) }
+func warn(s string) string  { return colorizeStream(os.Stdout, "33", s) }
+func red(s string) string   { return colorizeStream(os.Stderr, "31", s) }
 
 func short(sha string) string {
 	if len(sha) > 8 {

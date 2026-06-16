@@ -1,0 +1,72 @@
+# cherry-pick
+
+A small CLI that cherry-picks commits from a **commit hash** or a **GitHub Pull
+Request** onto a fresh branch created off a target branch.
+
+## Usage
+
+```
+cherry-pick <commit-hash | PR-url> <target-branch> [flags]
+```
+
+### Examples
+
+```sh
+# Cherry-pick a single commit onto a new branch off release/1.2
+cherry-pick a1b2c3d4e5f6 release/1.2
+
+# Cherry-pick every commit in PR #123 onto a new branch off main, then push
+cherry-pick https://github.com/owner/repo/pull/123 main --push
+```
+
+### Flags
+
+| Flag           | Description                                                     |
+| -------------- | --------------------------------------------------------------- |
+| `--push`       | Push the new branch to `origin` after a successful cherry-pick. |
+| `--force`      | Recreate the working branch if it already exists.               |
+| `-h`, `--help` | Show help.                                                      |
+
+## GitHub access
+
+The tool reads PR data in this order of preference:
+
+1. **`gh` CLI** — used when `gh` is installed _and_ authenticated. It handles
+   auth, pagination, and enterprise hosts automatically.
+2. **GitHub REST API** — fallback when `gh` is unavailable. Reads a token from
+   the `GITHUB_TOKEN` environment variable and talks to `api.github.com` (or
+   `https://<host>/api/v3` for enterprise hosts) using only the standard library.
+
+```sh
+export GITHUB_TOKEN=ghp_xxx   # only needed for the REST fallback
+```
+
+## Error handling
+
+- Fails if the current directory is not a git repository.
+- Fails clearly if `<target-branch>` does not exist on `origin`.
+- On a cherry-pick **conflict**, it stops and leaves the repo in the conflicted
+  state, printing how to `git cherry-pick --continue` or `--abort`.
+- Refuses to overwrite an existing branch unless `--force` is passed.
+- Handles invalid PR URLs and unknown/ambiguous commit hashes gracefully.
+
+All failures exit with a non-zero status code.
+
+## Build
+
+```sh
+go build -o cherry-pick .
+# or
+make build
+```
+
+## Install
+
+```sh
+go install github.com/fawazabdulla/cherry-pick@latest
+# or, from a clone:
+make install
+```
+
+This places the `cherry-pick` binary in `$(go env GOPATH)/bin` — make sure that
+directory is on your `PATH`.

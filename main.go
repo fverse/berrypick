@@ -179,7 +179,7 @@ output above for the reason). To proceed:
 
 func printSummary(branch, target string, commits []github.Commit, pushed bool) {
 	fmt.Println()
-	fmt.Println("✓ Done.")
+	fmt.Println(green("✓ Done."))
 	fmt.Printf("  Branch:        %s (off %s/%s)\n", branch, remote, target)
 	fmt.Printf("  Commits:       %d applied\n", len(commits))
 	for _, c := range commits {
@@ -200,6 +200,18 @@ func printSummary(branch, target string, commits []github.Commit, pushed bool) {
 		fmt.Printf("    git push --set-upstream %s %s\n", remote, branch)
 		fmt.Printf("    gh pr create --base %s --head %s\n", target, branch)
 	}
+}
+
+// green wraps s in ANSI green, but only when stdout is a terminal and NO_COLOR
+// is unset, so piped or redirected output stays clean.
+func green(s string) string {
+	if os.Getenv("NO_COLOR") != "" {
+		return s
+	}
+	if info, err := os.Stdout.Stat(); err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		return s
+	}
+	return "\033[32m" + s + "\033[0m"
 }
 
 func short(sha string) string {

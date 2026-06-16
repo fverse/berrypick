@@ -48,7 +48,8 @@ every commit in the PR is cherry-picked individually, in chronological order.
 
 The new branch is named cherry-pick/<first 8 chars of the SHA>, where the SHA is
 the commit hash for a commit, or the PR's HEAD (tip) commit SHA for a PR.`,
-		Example:       `  berrypick a1b2c3d4e5f6 release/1.2`,
+		Example: `  berrypick a1b2c3d4e5f6 release/1.2
+  berrypick https://github.com/owner/repo/pull/123 main`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,

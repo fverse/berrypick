@@ -131,6 +131,25 @@ func RemoteURL(remote string) (string, error) {
 	return output("remote", "get-url", remote)
 }
 
+// CurrentRef returns the name of the currently checked-out branch, or the commit
+// SHA when HEAD is detached.
+func CurrentRef() (string, error) {
+	if name, err := output("symbolic-ref", "--quiet", "--short", "HEAD"); err == nil && name != "" {
+		return name, nil
+	}
+	return output("rev-parse", "HEAD")
+}
+
+// Checkout switches the working tree to the given ref.
+func Checkout(ref string) error {
+	return run("checkout", ref)
+}
+
+// DeleteBranch force-deletes a local branch.
+func DeleteBranch(name string) error {
+	return run("branch", "-D", name)
+}
+
 // Push pushes branch to remote, setting upstream.
 func Push(remote, branch string) error {
 	return run("push", "--set-upstream", remote, branch)

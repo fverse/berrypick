@@ -23,9 +23,10 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	var (
-		push     bool
-		force    bool
-		mainline int
+		push        bool
+		force       bool
+		mainline    int
+		deleteLocal bool
 	)
 
 	cmd := &cobra.Command{
@@ -53,20 +54,25 @@ the commit hash for a commit, or the PR's HEAD (tip) commit SHA for a PR.`,
 			if len(args) != 2 {
 				return fmt.Errorf("expected exactly 2 arguments, <commit-hash | PR-url> and <target-branch>, but got %d; run with --help for usage", len(args))
 			}
-			return run(args[0], args[1], options{push: push, force: force, mainline: mainline})
+			if deleteLocal && !push {
+				return fmt.Errorf("--delete-local requires --push (the local branch is only deleted after a successful push)")
+			}
+			return run(args[0], args[1], options{push: push, force: force, mainline: mainline, deleteLocal: deleteLocal})
 		},
 	}
 
 	cmd.Flags().BoolVar(&push, "push", false, "push the new branch to origin after a successful cherry-pick")
 	cmd.Flags().BoolVar(&force, "force", false, "recreate the branch if it already exists")
 	cmd.Flags().IntVarP(&mainline, "mainline", "m", 0, "parent number (1-based) to follow when cherry-picking a merge commit")
+	cmd.Flags().BoolVar(&deleteLocal, "delete-local", false, "delete the local cherry-pick branch after a successful push (requires --push)")
 	return cmd
 }
 
 type options struct {
-	push     bool
-	force    bool
-	mainline int
+	push        bool
+	force       bool
+	mainline    int
+	deleteLocal bool
 }
 
 func run(sourceArg, targetBranch string, opts options) error {
@@ -137,6 +143,10 @@ func run(sourceArg, targetBranch string, opts options) error {
 		return fmt.Errorf("branch %q does not exist on %s or locally", targetBranch, remote)
 	}
 
+	// Remember where we started so we can return here if asked to delete the
+	// cherry-pick branch afterward (you can't delete the branch you're on).
+	startRef, _ := git.CurrentRef()
+
 	fmt.Printf("Creating branch %q from %s...\n", branch, startPoint)
 	if err := git.CreateBranch(branch, startPoint, opts.force); err != nil {
 		return err
@@ -170,10 +180,28 @@ func run(sourceArg, targetBranch string, opts options) error {
 		}
 	}
 
+	deletedLocal := false
 	if opts.push {
 		fmt.Printf("Pushing %q to %s...\n", branch, remote)
 		if err := git.Push(remote, branch); err != nil {
 			return err
+		}
+
+		// Only after a successful push: optionally delete the local branch. Return
+		// to where we started first, since git won't delete the current branch.
+		if opts.deleteLocal {
+			back := startRef
+			if back == "" || back == branch {
+				back = startPoint
+			}
+			fmt.Printf("Switching to %s and deleting local branch %q...\n", back, branch)
+			if err := git.Checkout(back); err != nil {
+				return err
+			}
+			if err := git.DeleteBranch(branch); err != nil {
+				return err
+			}
+			deletedLocal = true
 		}
 	}
 
@@ -186,7 +214,7 @@ func run(sourceArg, targetBranch string, opts options) error {
 		}
 	}
 
-	printSummary(branch, targetBranch, commits, opts.push, targetOnOrigin, prURL)
+	printSummary(branch, targetBranch, commits, opts.push, targetOnOrigin, deletedLocal, prURL)
 	return nil
 }
 
@@ -201,7 +229,7 @@ output above for the reason). To proceed:
   - To undo and return to the previous state:     git cherry-pick --abort`)
 }
 
-func printSummary(branch, target string, commits []github.Commit, pushed, targetOnOrigin bool, prURL string) {
+func printSummary(branch, target string, commits []github.Commit, pushed, targetOnOrigin, deletedLocal bool, prURL string) {
 	fmt.Println()
 	fmt.Println(green("✓ Done."))
 	fmt.Printf("  Branch:        %s (off %s)\n", branch, baseLabel(target, targetOnOrigin))
@@ -224,7 +252,11 @@ func printSummary(branch, target string, commits []github.Commit, pushed, target
 	}
 
 	if pushed {
-		fmt.Printf("  Branch pushed to %s. Open a PR:\n", remote)
+		if deletedLocal {
+			fmt.Printf("  Branch pushed to %s and local copy deleted. Open a PR:\n", remote)
+		} else {
+			fmt.Printf("  Branch pushed to %s. Open a PR:\n", remote)
+		}
 	} else {
 		fmt.Println("  Push the branch, then open a PR:")
 		fmt.Printf("    git push --set-upstream %s %s\n", remote, branch)

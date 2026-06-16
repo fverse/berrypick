@@ -24,6 +24,7 @@ berrypick https://github.com/owner/repo/pull/123 main --push
 | Flag                 | Description                                                                             |
 | -------------------- | --------------------------------------------------------------------------------------- |
 | `--push`             | Push the new branch to `origin` after a successful cherry-pick.                         |
+| `--delete-local`     | Delete the local cherry-pick branch after a successful push. Requires `--push`.         |
 | `--force`            | Recreate the working branch if it already exists.                                       |
 | `-m`, `--mainline N` | Parent number (1-based) to follow when cherry-picking a **merge commit** (e.g. `-m 1`). |
 | `-h`, `--help`       | Show help.                                                                              |

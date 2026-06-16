@@ -162,8 +162,9 @@ func RemoteURL(raw string) (Repo, error) {
 	}, nil
 }
 
-// CompareURL returns the GitHub "open a pull request" URL pre-filled with the
-// base and head branches.
-func (r Repo) CompareURL(base, head string) string {
-	return fmt.Sprintf("https://%s/%s/%s/compare/%s...%s?expand=1", r.Host, r.Owner, r.Name, base, head)
+// NewPRURL returns GitHub's "open a pull request" URL for creating a PR from the
+// given head branch (the branch that holds the new commits). GitHub presets the
+// head to this branch; the base defaults to the repository's default branch.
+func (r Repo) NewPRURL(head string) string {
+	return fmt.Sprintf("https://%s/%s/%s/pull/new/%s", r.Host, r.Owner, r.Name, head)
 }

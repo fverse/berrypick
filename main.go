@@ -170,11 +170,12 @@ func run(sourceArg, targetBranch string, opts options) error {
 		}
 	}
 
-	// Best-effort: build the web PR-creation link from the origin remote.
+	// Best-effort: build the web PR-creation link from the origin remote. The
+	// cherry-pick branch is the head (it holds the picked commits).
 	prURL := ""
 	if u, err := git.RemoteURL(remote); err == nil {
 		if repo, err := parse.RemoteURL(u); err == nil {
-			prURL = repo.CompareURL(targetBranch, branch)
+			prURL = repo.NewPRURL(branch)
 		}
 	}
 

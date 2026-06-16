@@ -146,12 +146,12 @@ func TestRemoteURLInvalid(t *testing.T) {
 	}
 }
 
-func TestCompareURL(t *testing.T) {
+func TestNewPRURL(t *testing.T) {
 	r := Repo{Host: "github.com", Owner: "owner", Name: "repo"}
-	got := r.CompareURL("staging", "cherry-pick/98f40d37")
-	want := "https://github.com/owner/repo/compare/staging...cherry-pick/98f40d37?expand=1"
+	got := r.NewPRURL("cherry-pick/98f40d37")
+	want := "https://github.com/owner/repo/pull/new/cherry-pick/98f40d37"
 	if got != want {
-		t.Errorf("CompareURL = %q, want %q", got, want)
+		t.Errorf("NewPRURL = %q, want %q", got, want)
 	}
 }
 

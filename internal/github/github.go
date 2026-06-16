@@ -1,18 +1,21 @@
-// Package github resolves the commits belonging to a pull request. It prefers
-// the gh CLI (which handles auth, pagination and enterprise hosts) and falls
-// back to the GitHub REST API using only the standard library.
+// Package github resolves the commits belonging to a pull request via the
+// GitHub REST API. Credentials are discovered by go-gh's auth package, which
+// reads GH_TOKEN/GITHUB_TOKEN from the environment and the token stored by a
+// previous `gh auth login` — without requiring the gh binary at runtime. When
+// no credentials are found, public repositories are still reachable through
+// unauthenticated requests (subject to GitHub's low anonymous rate limit).
 package github
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"os/exec"
-	"strconv"
+	"strings"
 	"time"
 
+	"github.com/cli/go-gh/v2/pkg/api"
+	"github.com/cli/go-gh/v2/pkg/auth"
 	"github.com/fverse/berrypick/internal/parse"
 )
 
@@ -35,136 +38,175 @@ type Resolver interface {
 	PRCommits(pr parse.PRRef) (PRResult, error)
 }
 
-// NewResolver picks the best available backend: the gh CLI when it is installed
-// and authenticated, otherwise the REST API with a GITHUB_TOKEN.
+// NewResolver returns a resolver backed by the GitHub REST API. Token discovery
+// is delegated to go-gh, so an existing `gh auth login` or a GH_TOKEN/
+// GITHUB_TOKEN environment variable is picked up automatically.
 func NewResolver() Resolver {
-	if path, err := exec.LookPath("gh"); err == nil && ghAuthenticated() {
-		return &ghResolver{bin: path}
-	}
-	return &restResolver{client: &http.Client{Timeout: 30 * time.Second}}
+	return &restResolver{}
 }
 
-func ghAuthenticated() bool {
-	cmd := exec.Command("gh", "auth", "status")
-	return cmd.Run() == nil
-}
-
-// --- gh CLI backend ---
-
-type ghResolver struct {
-	bin string
-}
-
-func (g *ghResolver) PRCommits(pr parse.PRRef) (PRResult, error) {
-	cmd := exec.Command(g.bin, "pr", "view", strconv.Itoa(pr.Number),
-		"--repo", pr.Slug(), "--json", "commits,headRefOid")
-	// gh resolves enterprise hosts via GH_HOST.
-	if pr.Host != "" && pr.Host != "github.com" {
-		cmd.Env = append(os.Environ(), "GH_HOST="+pr.Host)
-	}
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return PRResult{}, fmt.Errorf("gh pr view #%d: %s", pr.Number, trimErr(stderr.String(), err))
-	}
-
-	var payload struct {
-		HeadRefOid string `json:"headRefOid"`
-		Commits    []struct {
-			OID             string `json:"oid"`
-			MessageHeadline string `json:"messageHeadline"`
-		} `json:"commits"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		return PRResult{}, fmt.Errorf("parsing gh output for PR #%d: %w", pr.Number, err)
-	}
-
-	res := PRResult{HeadSHA: payload.HeadRefOid}
-	for _, c := range payload.Commits {
-		res.Commits = append(res.Commits, Commit{SHA: c.OID, Subject: c.MessageHeadline})
-	}
-	if res.HeadSHA == "" && len(res.Commits) > 0 {
-		res.HeadSHA = res.Commits[len(res.Commits)-1].SHA
-	}
-	return res, nil
-}
-
-// --- REST API backend ---
-
-type restResolver struct {
-	client *http.Client
-}
+type restResolver struct{}
 
 func (r *restResolver) PRCommits(pr parse.PRRef) (PRResult, error) {
-	token := os.Getenv("GITHUB_TOKEN")
-	if token == "" {
-		return PRResult{}, fmt.Errorf("gh CLI is unavailable and GITHUB_TOKEN is not set; install/authenticate gh or export a token")
+	host := pr.Host
+	if host == "" {
+		host = "github.com"
 	}
-	base := apiBase(pr.Host)
+	token, _ := auth.TokenForHost(host)
+
+	fetch, err := newFetcher(host, token)
+	if err != nil {
+		return PRResult{}, err
+	}
 
 	// HEAD SHA from the pull request object.
+	base := fmt.Sprintf("repos/%s/%s/pulls/%d", pr.Owner, pr.Repo, pr.Number)
 	var pull struct {
 		Head struct {
 			SHA string `json:"sha"`
 		} `json:"head"`
 	}
-	pullURL := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", base, pr.Owner, pr.Repo, pr.Number)
-	if err := r.getJSON(pullURL, token, &pull); err != nil {
-		return PRResult{}, err
+	if _, err := fetch(base, &pull); err != nil {
+		return PRResult{}, annotate(err, pr, token != "")
 	}
 
-	// Commits, paginated, oldest first (GitHub's documented order).
+	// Commits, paginated, oldest first (GitHub's documented order). Each page's
+	// Link header points at the next one; an empty next URL ends the loop.
 	var commits []Commit
-	page := 1
-	for {
+	next := base + "/commits?per_page=100"
+	for next != "" {
 		var batch []struct {
 			SHA    string `json:"sha"`
 			Commit struct {
 				Message string `json:"message"`
 			} `json:"commit"`
 		}
-		url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/commits?per_page=100&page=%d",
-			base, pr.Owner, pr.Repo, pr.Number, page)
-		if err := r.getJSON(url, token, &batch); err != nil {
-			return PRResult{}, err
+		link, err := fetch(next, &batch)
+		if err != nil {
+			return PRResult{}, annotate(err, pr, token != "")
 		}
 		for _, c := range batch {
 			commits = append(commits, Commit{SHA: c.SHA, Subject: firstLine(c.Commit.Message)})
 		}
-		if len(batch) < 100 {
-			break
-		}
-		page++
+		next = link
 	}
 
-	return PRResult{HeadSHA: pull.Head.SHA, Commits: commits}, nil
+	res := PRResult{HeadSHA: pull.Head.SHA, Commits: commits}
+	if res.HeadSHA == "" && len(commits) > 0 {
+		res.HeadSHA = commits[len(commits)-1].SHA
+	}
+	return res, nil
 }
 
-func (r *restResolver) getJSON(url, token string, dst any) error {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return fmt.Errorf("building request for %s: %w", url, err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "berrypick-cli")
+// fetcher performs a GET for path (a relative "repos/..." path or an absolute
+// URL taken from a Link header), decodes the JSON body into dst, and returns the
+// rel="next" pagination URL (empty when there are no further pages).
+type fetcher func(path string, dst any) (next string, err error)
 
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("requesting %s: %w", url, err)
+// newFetcher chooses a backend based on whether a token was found. With a token
+// it uses go-gh's REST client (handling enterprise hosts, headers and auth);
+// without one it issues plain unauthenticated requests so public repos still
+// work with zero setup.
+func newFetcher(host, token string) (fetcher, error) {
+	if token != "" {
+		client, err := api.NewRESTClient(api.ClientOptions{
+			Host:      host,
+			AuthToken: token,
+			Headers:   map[string]string{"X-GitHub-Api-Version": "2022-11-28"},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("creating GitHub API client: %w", err)
+		}
+		return func(path string, dst any) (string, error) {
+			// Request returns an *api.HTTPError for non-2xx responses, which
+			// annotate inspects for auth failures.
+			resp, err := client.Request(http.MethodGet, path, nil)
+			if err != nil {
+				return "", err
+			}
+			return decodePage(resp, dst)
+		}, nil
 	}
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	prefix := apiBase(host) + "/"
+	return func(path string, dst any) (string, error) {
+		url := path
+		if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+			url = prefix + path
+		}
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return "", fmt.Errorf("building request for %s: %w", url, err)
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		req.Header.Set("User-Agent", "berrypick-cli")
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("requesting %s: %w", url, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			// Mirror go-gh's error type so annotate can treat both paths alike.
+			return "", &api.HTTPError{StatusCode: resp.StatusCode, Message: resp.Status}
+		}
+		return decodePage(resp, dst)
+	}, nil
+}
+
+// decodePage decodes resp into dst and returns the rel="next" link. It always
+// closes the body.
+func decodePage(resp *http.Response, dst any) (string, error) {
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GitHub API %s returned %s", url, resp.Status)
-	}
 	if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {
-		return fmt.Errorf("decoding response from %s: %w", url, err)
+		return "", fmt.Errorf("decoding GitHub response: %w", err)
 	}
-	return nil
+	return nextLink(resp.Header.Get("Link")), nil
+}
+
+// annotate turns an auth-related HTTP failure into actionable guidance. GitHub
+// returns 404 (not 403) for private repos accessed without credentials, so an
+// unauthenticated 404 is most often "private repo, please authenticate".
+func annotate(err error, pr parse.PRRef, authenticated bool) error {
+	var httpErr *api.HTTPError
+	if !errors.As(err, &httpErr) {
+		return err
+	}
+	switch httpErr.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		if !authenticated {
+			return fmt.Errorf("cannot access %s PR #%d without credentials (the repository may be private, or you hit GitHub's anonymous rate limit); authenticate with `gh auth login` or set GITHUB_TOKEN, then retry", pr.Slug(), pr.Number)
+		}
+		return fmt.Errorf("your GitHub credentials don't grant access to %s PR #%d (check the token's repo scope): %s", pr.Slug(), pr.Number, httpErr.Message)
+	case http.StatusNotFound:
+		if !authenticated {
+			return fmt.Errorf("%s PR #%d not found; if the repository is private, authenticate with `gh auth login` or set GITHUB_TOKEN, then retry", pr.Slug(), pr.Number)
+		}
+	}
+	return err
+}
+
+// nextLink extracts the rel="next" URL from a GitHub Link header, returning ""
+// when there is no next page.
+func nextLink(header string) string {
+	for _, part := range strings.Split(header, ",") {
+		segs := strings.Split(part, ";")
+		if len(segs) < 2 {
+			continue
+		}
+		urlPart := strings.TrimSpace(segs[0])
+		if !strings.HasPrefix(urlPart, "<") || !strings.HasSuffix(urlPart, ">") {
+			continue
+		}
+		for _, p := range segs[1:] {
+			if strings.TrimSpace(p) == `rel="next"` {
+				return urlPart[1 : len(urlPart)-1]
+			}
+		}
+	}
+	return ""
 }
 
 // apiBase returns the REST API root for the host (api.github.com for github.com,
@@ -183,11 +225,4 @@ func firstLine(s string) string {
 		}
 	}
 	return s
-}
-
-func trimErr(stderr string, err error) string {
-	if s := bytes.TrimSpace([]byte(stderr)); len(s) > 0 {
-		return string(s)
-	}
-	return err.Error()
 }

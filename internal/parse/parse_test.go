@@ -77,6 +77,42 @@ func TestParsePRURL(t *testing.T) {
 	}
 }
 
+func TestParseBlame(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want BlameRef
+	}{
+		{"nested path", "internal/git/run.go:42", BlameRef{File: "internal/git/run.go", Line: 42}},
+		{"bare file", "Makefile:10", BlameRef{File: "Makefile", Line: 10}},
+		{"line one", "main.go:1", BlameRef{File: "main.go", Line: 1}},
+		{"path with spaces", "my file.txt:7", BlameRef{File: "my file.txt", Line: 7}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Parse(tc.in)
+			if err != nil {
+				t.Fatalf("Parse(%q) unexpected error: %v", tc.in, err)
+			}
+			if got.Kind != KindBlame {
+				t.Fatalf("Parse(%q) Kind = %v, want KindBlame", tc.in, got.Kind)
+			}
+			if got.Blame != tc.want {
+				t.Errorf("Parse(%q) Blame = %+v, want %+v", tc.in, got.Blame, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseBlameInvalid(t *testing.T) {
+	// Zero/negative line numbers must not be accepted as blame references.
+	for _, in := range []string{"foo.go:0", "foo.go:-1"} {
+		if _, err := Parse(in); err == nil {
+			t.Errorf("Parse(%q) expected error, got nil", in)
+		}
+	}
+}
+
 func TestParseInvalid(t *testing.T) {
 	cases := []string{
 		"",

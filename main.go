@@ -15,6 +15,9 @@ import (
 
 const remote = "origin"
 
+// version is the build version, stamped at release time via -ldflags.
+var version = "dev"
+
 // errReported signals that the error was already printed (e.g. an arg error
 // shown above the help), so main should just exit non-zero without printing it.
 var errReported = errors.New("error already reported")
@@ -34,22 +37,34 @@ func newRootCmd() *cobra.Command {
 		force       bool
 		mainline    int
 		deleteLocal bool
+		rev         string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "berrypick <commit-hash | PR-url> <target-branch>",
-		Short: "Cherry-pick commits from a commit or GitHub PR onto a new branch",
+		Use:     "berrypick <commit-hash | PR-url | file:line> <target-branch>",
+		Version: version,
+		Short:   "Cherry-pick commits from a commit, GitHub PR, or blamed line onto a new branch",
 		Long: `berrypick creates a branch off <target-branch> and cherry-picks the
 requested work onto it.
 
-The first argument is either a git commit hash (full or abbreviated) or a
-GitHub pull request URL (https://github.com/<owner>/<repo>/pull/<n>). For a PR,
-every commit in the PR is cherry-picked individually, in chronological order.
+The first argument is one of:
+  - a git commit hash (full or abbreviated);
+  - a GitHub pull request URL (https://github.com/<owner>/<repo>/pull/<n>) — every
+    commit in the PR is cherry-picked individually, in chronological order;
+  - a <file>:<line> reference (e.g. internal/git/git.go:42) — git blame finds the
+    commit that last changed that line and cherry-picks it.
+
+Note for <file>:<line>: this cherry-picks the ENTIRE commit that last touched the
+line, not just the line. If that commit changed 10 files, all 10 come along. The
+line is blamed in your working tree by default; use --rev to blame a specific
+revision instead.
 
 The new branch is named cherry-pick/<first 8 chars of the SHA>, where the SHA is
-the commit hash for a commit, or the PR's HEAD (tip) commit SHA for a PR.`,
+the commit hash for a commit, the PR's HEAD (tip) commit SHA for a PR, or the
+blamed commit's SHA for a <file>:<line> reference.`,
 		Example: `  berrypick a1b2c3d4e5f6 release/1.2
-  berrypick https://github.com/owner/repo/pull/123 main`,
+  berrypick https://github.com/owner/repo/pull/123 main
+  berrypick internal/git/git.go:42 main`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -57,7 +72,7 @@ the commit hash for a commit, or the PR's HEAD (tip) commit SHA for a PR.`,
 			// Wrong number of arguments: print the error first, then usage,
 			// examples and flags (cmd.Usage omits the long description).
 			if len(args) != 2 {
-				fmt.Fprintln(os.Stderr, red(fmt.Sprintf("error: requires 2 arguments: <commit-hash | PR-url> <target-branch> (got %d)", len(args))))
+				fmt.Fprintln(os.Stderr, red(fmt.Sprintf("error: requires 2 arguments: <commit-hash | PR-url | file:line> <target-branch> (got %d)", len(args))))
 				fmt.Fprintln(os.Stderr)
 				_ = cmd.Usage()
 				return errReported
@@ -65,7 +80,7 @@ the commit hash for a commit, or the PR's HEAD (tip) commit SHA for a PR.`,
 			if deleteLocal && !push {
 				return fmt.Errorf("--delete-local requires --push (the local branch is only deleted after a successful push)")
 			}
-			return run(args[0], args[1], options{push: push, force: force, mainline: mainline, deleteLocal: deleteLocal})
+			return run(args[0], args[1], options{push: push, force: force, mainline: mainline, deleteLocal: deleteLocal, rev: rev})
 		},
 	}
 
@@ -73,6 +88,7 @@ the commit hash for a commit, or the PR's HEAD (tip) commit SHA for a PR.`,
 	cmd.Flags().BoolVar(&force, "force", false, "recreate the branch if it already exists")
 	cmd.Flags().IntVarP(&mainline, "mainline", "m", 0, "parent number (1-based) to follow when cherry-picking a merge commit")
 	cmd.Flags().BoolVar(&deleteLocal, "delete-local", false, "delete the local cherry-pick branch after a successful push (requires --push)")
+	cmd.Flags().StringVar(&rev, "rev", "", "for a <file>:<line> source, blame this revision instead of the working tree")
 	return cmd
 }
 
@@ -81,6 +97,7 @@ type options struct {
 	force       bool
 	mainline    int
 	deleteLocal bool
+	rev         string
 }
 
 func run(sourceArg, targetBranch string, opts options) error {
@@ -91,6 +108,10 @@ func run(sourceArg, targetBranch string, opts options) error {
 	src, err := parse.Parse(sourceArg)
 	if err != nil {
 		return err
+	}
+
+	if opts.rev != "" && src.Kind != parse.KindBlame {
+		return fmt.Errorf("--rev only applies to a <file>:<line> source")
 	}
 
 	// Resolve the commits to apply and the SHA used to name the branch.
@@ -106,6 +127,21 @@ func run(sourceArg, targetBranch string, opts options) error {
 		}
 		nameSHA = full
 		commits = []github.Commit{{SHA: full}}
+	case parse.KindBlame:
+		where := "your working tree"
+		if opts.rev != "" {
+			where = opts.rev
+		}
+		fmt.Printf("Blaming %s:%d in %s...\n", src.Blame.File, src.Blame.Line, where)
+		full, err := git.BlameLine(src.Blame.File, src.Blame.Line, opts.rev)
+		if err != nil {
+			return err
+		}
+		// Label with the commit subject so the user sees what they're bringing.
+		subject, _ := git.CommitSubject(full)
+		nameSHA = full
+		commits = []github.Commit{{SHA: full, Subject: subject}}
+		fmt.Printf("Line %d was last changed by %s — cherry-picking that entire commit (all files it touched).\n", src.Blame.Line, label(full, subject))
 	case parse.KindPullRequest:
 		fmt.Printf("Fetching commits for PR #%d (%s)...\n", src.PR.Number, src.PR.Slug())
 		res, err := github.NewResolver().PRCommits(src.PR)
@@ -173,11 +209,7 @@ func run(sourceArg, targetBranch string, opts options) error {
 			return fmt.Errorf("%s is a merge commit (%d parents); re-run with --mainline <n> to pick the diff relative to one parent (usually --mainline 1)", short(c.SHA), parents)
 		}
 
-		label := c.SHA
-		if c.Subject != "" {
-			label = fmt.Sprintf("%s %s", short(c.SHA), c.Subject)
-		}
-		fmt.Printf("Cherry-picking [%d/%d] %s\n", i+1, len(commits), label)
+		fmt.Printf("Cherry-picking [%d/%d] %s\n", i+1, len(commits), label(c.SHA, c.Subject))
 		if err := git.CherryPick(c.SHA, opts.mainline); err != nil {
 			// Only show conflict-resolution steps if git actually stopped on a
 			// conflict; other failures already printed their own reason.
@@ -308,6 +340,15 @@ func red(s string) string   { return colorizeStream(os.Stderr, "31", s) }
 func short(sha string) string {
 	if len(sha) > 8 {
 		return sha[:8]
+	}
+	return sha
+}
+
+// label renders a commit for display: "<short-sha> <subject>" when a subject is
+// known, otherwise the full SHA.
+func label(sha, subject string) string {
+	if subject != "" {
+		return fmt.Sprintf("%s %s", short(sha), subject)
 	}
 	return sha
 }

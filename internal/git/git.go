@@ -77,6 +77,50 @@ func ResolveCommit(ref string) (string, error) {
 	return sha, nil
 }
 
+// BlameLine returns the full SHA of the commit that last modified the given line
+// of file. When rev is non-empty the file is blamed at that revision instead of
+// the working tree. It fails clearly when the line is uncommitted, out of range,
+// or the file is missing/untracked (git's own stderr explains the latter cases).
+func BlameLine(file string, line int, rev string) (string, error) {
+	spec := strconv.Itoa(line) + "," + strconv.Itoa(line)
+	args := []string{"blame", "-L", spec, "--porcelain"}
+	if rev != "" {
+		args = append(args, rev)
+	}
+	// The "--" guards against a path that looks like a flag or a revision.
+	args = append(args, "--", file)
+
+	out, err := output(args...)
+	if err != nil {
+		return "", err
+	}
+
+	// Porcelain output starts with "<40-hex-sha> <orig-line> <final-line> ...".
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return "", fmt.Errorf("git blame produced no output for %s:%d", file, line)
+	}
+	sha := fields[0]
+	if isAllZeroSHA(sha) {
+		return "", fmt.Errorf("line %d of %s is not committed yet; commit it before cherry-picking", line, file)
+	}
+	return sha, nil
+}
+
+// CommitSubject returns the one-line subject of the given commit, used to label
+// what is being brought along.
+func CommitSubject(sha string) (string, error) {
+	return output("show", "-s", "--format=%s", sha)
+}
+
+// isAllZeroSHA reports whether sha is git's all-zero "Not Committed Yet" marker.
+func isAllZeroSHA(sha string) bool {
+	if sha == "" {
+		return false
+	}
+	return strings.Trim(sha, "0") == ""
+}
+
 // CreateBranch creates branch at startPoint and checks it out. When force is
 // true an existing branch of the same name is reset to startPoint.
 //

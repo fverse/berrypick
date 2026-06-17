@@ -1,6 +1,7 @@
-// Package parse handles interpreting the first CLI argument (a commit hash or
-// a GitHub Pull Request URL) and deriving branch names. It is pure logic with
-// no side effects so it can be unit tested in isolation.
+// Package parse handles interpreting the first CLI argument (a commit hash, a
+// GitHub Pull Request URL, or a <file>:<line> blame reference) and deriving
+// branch names. It is pure logic with no side effects so it can be unit tested
+// in isolation.
 package parse
 
 import (
@@ -11,7 +12,7 @@ import (
 	"strings"
 )
 
-// Kind distinguishes the two supported source types.
+// Kind distinguishes the supported source types.
 type Kind int
 
 const (
@@ -19,6 +20,9 @@ const (
 	KindCommit Kind = iota
 	// KindPullRequest is a GitHub pull request identified by its URL.
 	KindPullRequest
+	// KindBlame is a <file>:<line> reference; the commit that last changed that
+	// line is resolved via git blame and cherry-picked in full.
+	KindBlame
 )
 
 // PRRef identifies a GitHub pull request, including the host so the REST
@@ -35,18 +39,32 @@ func (p PRRef) Slug() string {
 	return p.Owner + "/" + p.Repo
 }
 
+// BlameRef identifies a single line in a file whose last-modifying commit should
+// be resolved (via git blame) and cherry-picked.
+type BlameRef struct {
+	File string
+	Line int
+}
+
 // Source is the parsed result of the first positional argument.
 type Source struct {
 	Kind   Kind
-	Commit string // populated when Kind == KindCommit
-	PR     PRRef  // populated when Kind == KindPullRequest
+	Commit string   // populated when Kind == KindCommit
+	PR     PRRef    // populated when Kind == KindPullRequest
+	Blame  BlameRef // populated when Kind == KindBlame
 }
 
 // commitHashRe matches a hex string between 4 (git's minimum abbreviation) and
 // 40 (a full SHA-1) characters long.
 var commitHashRe = regexp.MustCompile(`^[0-9a-fA-F]{4,40}$`)
 
-// Parse inspects arg and reports whether it is a commit hash or a PR URL.
+// blameRe matches a "<file>:<line>" reference: any non-empty path followed by a
+// colon and a run of digits at the very end. Commit hashes (colon-free) and PR
+// URLs (handled earlier) never match.
+var blameRe = regexp.MustCompile(`^(.+):([0-9]+)$`)
+
+// Parse inspects arg and reports whether it is a commit hash, a PR URL, or a
+// <file>:<line> blame reference.
 func Parse(arg string) (Source, error) {
 	arg = strings.TrimSpace(arg)
 	if arg == "" {
@@ -62,11 +80,21 @@ func Parse(arg string) (Source, error) {
 		return Source{Kind: KindPullRequest, PR: pr}, nil
 	}
 
+	// A trailing ":<digits>" makes this a blame reference. Checked before the
+	// commit-hash test, though a hash has no colon so they can't collide.
+	if m := blameRe.FindStringSubmatch(arg); m != nil {
+		line, err := strconv.Atoi(m[2])
+		if err != nil || line <= 0 {
+			return Source{}, fmt.Errorf("invalid blame reference %q: line number must be a positive integer", arg)
+		}
+		return Source{Kind: KindBlame, Blame: BlameRef{File: m[1], Line: line}}, nil
+	}
+
 	if commitHashRe.MatchString(arg) {
 		return Source{Kind: KindCommit, Commit: strings.ToLower(arg)}, nil
 	}
 
-	return Source{}, fmt.Errorf("argument %q is neither a valid commit hash nor a GitHub PR URL", arg)
+	return Source{}, fmt.Errorf("argument %q is not a commit hash, a GitHub PR URL, or a <file>:<line> reference", arg)
 }
 
 // parsePRURL extracts owner/repo/number from a URL of the form

@@ -35,7 +35,7 @@ are provided for **macOS**, **Linux**, and **Windows** (`amd64` and `arm64`).
 ## Usage
 
 ```
-berrypick <commit-hash | file:line | PR-url> <target-branch> [flags]
+berrypick <commit-hash | file:line | PR-url> <target-branch> [branch-name] [flags]
 ```
 
 The first argument can be:
@@ -46,7 +46,8 @@ The first argument can be:
   changed that line and cherry-picks it (see [Blame mode](#blame-mode)).
 - a **GitHub PR URL** (`https://github.com/<owner>/<repo>/pull/<n>`) — cherry-picks
 
-The new branch is named `cherry-pick/<first 8 chars of the SHA>`.
+By default the new branch is named `cherry-pick/<first 8 chars of the SHA>`. Pass
+an optional third argument to name the branch yourself instead.
 
 ### Examples
 
@@ -59,6 +60,9 @@ berrypick src/utils/util.js:42 main
 
 # Cherry-pick every commit in PR #123 onto a new branch off main, then push
 berrypick https://github.com/owner/repo/pull/123 main --push
+
+# Cherry-pick a commit onto a new branch off release/1.2 with a custom branch name
+berrypick a1b2c3d4e5f6 release/1.2 hotfix/login-bug
 
 ```
 

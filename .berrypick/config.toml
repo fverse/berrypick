@@ -1,0 +1,23 @@
+# berrypick tracking config
+
+# Simple form: changes flow from one source branch to many targets.
+[branches]
+source  = "main"
+targets = []  # e.g. ["release/2.0", "release/1.0"]
+
+# Advanced form (optional): chained back-ports. If [[flows]] is present it wins
+# over [branches]. Uncomment and edit to use it.
+#
+# [[flows]]
+# from = "main"
+# to   = ["release/2.0"]
+#
+# [[flows]]
+# from = "release/2.0"
+# to   = ["release/1.0"]
+
+# Forge settings (optional): autodetected from the git remote when omitted.
+#
+# [forge]
+# kind = "github"   # github | gitlab | ...
+# host = "github.com"

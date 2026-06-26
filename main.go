@@ -11,6 +11,7 @@ import (
 	"github.com/fverse/berrypick/internal/git"
 	"github.com/fverse/berrypick/internal/github"
 	"github.com/fverse/berrypick/internal/parse"
+	"github.com/fverse/berrypick/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -96,6 +97,11 @@ argument to name the branch yourself instead.`,
 	cmd.Flags().IntVarP(&mainline, "mainline", "m", 0, "parent number (1-based) to follow when cherry-picking a merge commit")
 	cmd.Flags().BoolVar(&deleteLocal, "delete-local", false, "delete the local cherry-pick branch after a successful push (requires --push)")
 	cmd.Flags().StringVar(&rev, "rev", "", "for a <file>:<line> source, blame this revision instead of the working tree")
+
+	// Tracking subcommands. The bare `berrypick <source> <target>` form still runs
+	// the root RunE above; cobra only dispatches to a subcommand when the first arg
+	// matches one of these names (commit hashes are hex, so they never collide).
+	cmd.AddCommand(newInitCmd(), newTodoCmd(), newStatusCmd(), newCompactCmd())
 	return cmd
 }
 
@@ -165,6 +171,10 @@ func run(sourceArg, targetBranch, branchName string, opts options) error {
 		commits = res.Commits
 	}
 
+	// Logical identity for the shared tracking log, derived before any branch
+	// work so a queued todo and its eventual pick share one (id, target) key.
+	trackID, trackType := trackingID(src, nameSHA)
+
 	// Use the caller-supplied branch name when given; otherwise derive the
 	// default cherry-pick/<8-char-sha> name from the resolved SHA.
 	branch := strings.TrimSpace(branchName)
@@ -230,6 +240,25 @@ func run(sourceArg, targetBranch, branchName string, opts options) error {
 			}
 			return fmt.Errorf("cherry-pick failed on %s", short(c.SHA))
 		}
+	}
+
+	// The cherry-pick succeeded locally. Record it in the shared tracking log
+	// (a no-op unless `berrypick init` has been run). Capture the resulting tip
+	// SHA on the new branch and the original author/subject for a readable log.
+	if root, err := git.RepoRoot(); err == nil {
+		resultSHA, _ := git.HeadSHA()
+		author, subject := "", ""
+		if a, s, metaErr := git.CommitMeta(nameSHA); metaErr == nil {
+			author, subject = a, s
+		}
+		recordCherryPickDone(root, store.Event{
+			ID:      trackID,
+			Type:    trackType,
+			To:      targetBranch,
+			Subject: subject,
+			Author:  author,
+			NewSHA:  resultSHA,
+		})
 	}
 
 	deletedLocal := false

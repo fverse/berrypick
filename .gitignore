@@ -1,2 +1,4 @@
 /berrypick
 *.exe
+.DS_Store
+docs

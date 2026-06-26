@@ -47,6 +47,13 @@ func IsRepo() bool {
 	return err == nil
 }
 
+// RepoRoot returns the absolute path to the top level of the working tree, used
+// to anchor the shared .berrypick/ directory at a stable location regardless of
+// the current working directory within the repo.
+func RepoRoot() (string, error) {
+	return output("rev-parse", "--show-toplevel")
+}
+
 // Fetch updates the given branch from the remote.
 func Fetch(remote, branch string) error {
 	return run("fetch", remote, branch)
@@ -139,13 +146,38 @@ func CreateBranch(name, startPoint string, force bool) error {
 // CherryPick applies a single commit onto the current branch. When mainline is
 // greater than zero it is passed as git's -m option, which is required (and only
 // valid) when cherry-picking a merge commit.
+//
+// -x records "(cherry picked from commit <sha>)" in the new commit message,
+// giving a git-native record of the original SHA that `status --reconcile` reads
+// to detect picks made outside berrypick. Every current source mode has a real
+// source SHA, so -x always applies.
 func CherryPick(sha string, mainline int) error {
-	args := []string{"cherry-pick"}
+	args := []string{"cherry-pick", "-x"}
 	if mainline > 0 {
 		args = append(args, "-m", strconv.Itoa(mainline))
 	}
 	args = append(args, sha)
 	return run(args...)
+}
+
+// HeadSHA returns the full SHA currently at HEAD, used to record the resulting
+// commit on the target after a successful cherry-pick.
+func HeadSHA() (string, error) {
+	return output("rev-parse", "HEAD")
+}
+
+// CommitMeta returns the original author name and one-line subject of sha. Used
+// to label a recorded cherry-pick with who wrote the change and what it does.
+func CommitMeta(sha string) (author, subject string, err error) {
+	// A NUL separator keeps a subject containing any character intact.
+	out, err := output("show", "-s", "--format=%an%x00%s", sha)
+	if err != nil {
+		return "", "", err
+	}
+	if i := strings.IndexByte(out, 0); i >= 0 {
+		return out[:i], out[i+1:], nil
+	}
+	return out, "", nil
 }
 
 // ParentCount returns the number of parent commits of sha. A result greater

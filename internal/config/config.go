@@ -59,7 +59,7 @@ type Config struct {
 func DirPath(root string) string { return filepath.Join(root, Dir) }
 
 // ConfigPath returns the config.toml path inside root's .berrypick directory.
-func ConfigPath(root string) string { return filepath.Join(Dir, ConfigName) }
+func ConfigPath(root string) string { return filepath.Join(root, Dir, ConfigName) }
 
 // LogPath returns the log.jsonl path inside root's .berrypick directory.
 func LogPath(root string) string { return filepath.Join(root, Dir, LogName) }

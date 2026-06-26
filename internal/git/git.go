@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -229,4 +230,56 @@ func DeleteBranch(name string) error {
 // Push pushes branch to remote, setting upstream.
 func Push(remote, branch string) error {
 	return run("push", "--set-upstream", remote, branch)
+}
+
+// RefExists reports whether ref resolves to a commit in the local object store
+// (no network), used to pick a scannable ref for reconciliation.
+func RefExists(ref string) bool {
+	_, err := output("rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	return err == nil
+}
+
+// CherryPickRecord is one commit on a branch that carries a git-native
+// "(cherry picked from commit <sha>)" annotation left by cherry-pick -x.
+type CherryPickRecord struct {
+	NewSHA  string // the commit on the scanned branch
+	Subject string // its subject line
+	OrigSHA string // the source commit it was picked from (immediate source)
+}
+
+// cherryPickRe matches the -x annotation git appends to a cherry-picked commit.
+var cherryPickRe = regexp.MustCompile(`cherry picked from commit ([0-9a-fA-F]{7,40})`)
+
+// LogCherryPicks scans ref's history for commits annotated by cherry-pick -x and
+// returns one record per commit. When a commit was picked through several
+// branches it accumulates multiple annotations; the immediate source (the last
+// annotation) is reported, matching what berrypick records for a chained pick.
+func LogCherryPicks(ref string) ([]CherryPickRecord, error) {
+	// Unit separator between fields, record separator between commits, so subjects
+	// and multi-line bodies survive intact.
+	out, err := output("log", ref, "--no-merges", "--grep", "cherry picked from commit", "--format=%H%x1f%s%x1f%b%x1e")
+	if err != nil {
+		return nil, err
+	}
+	var records []CherryPickRecord
+	for _, rec := range strings.Split(out, "\x1e") {
+		rec = strings.Trim(rec, "\n")
+		if rec == "" {
+			continue
+		}
+		parts := strings.SplitN(rec, "\x1f", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		matches := cherryPickRe.FindAllStringSubmatch(parts[2], -1)
+		if len(matches) == 0 {
+			continue
+		}
+		records = append(records, CherryPickRecord{
+			NewSHA:  parts[0],
+			Subject: parts[1],
+			OrigSHA: matches[len(matches)-1][1],
+		})
+	}
+	return records, nil
 }

@@ -1,0 +1,57 @@
+package main
+
+import (
+	"testing"
+
+	"github.com/fverse/berrypick/internal/git"
+	"github.com/fverse/berrypick/internal/store"
+)
+
+func TestCellLabels(t *testing.T) {
+	cases := []struct {
+		state store.CellState
+		label string
+		name  string
+	}{
+		{store.CellDone, "✓ done", "done"},
+		{store.CellTodo, "⧗ todo", "todo"},
+		{store.CellNone, "· -", "none"},
+	}
+	for _, c := range cases {
+		if got := cellLabel(c.state); got != c.label {
+			t.Errorf("cellLabel(%v) = %q, want %q", c.state, got, c.label)
+		}
+		if got := cellName(c.state); got != c.name {
+			t.Errorf("cellName(%v) = %q, want %q", c.state, got, c.name)
+		}
+	}
+}
+
+func TestCoveredByDone(t *testing.T) {
+	full := "9bfdb116aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	st := stateFrom(t,
+		// Done keyed by the original short SHA (commit-mode pick).
+		store.Event{Event: store.Done, ID: "9bfdb116", To: "r1", NewSHA: "newsha1"},
+		// Done keyed by a PR number, but its resulting SHA is recorded.
+		store.Event{Event: store.Done, ID: "123", Type: store.Change, To: "r2", NewSHA: "prtip"},
+		// Only queued, not done.
+		store.Event{Event: store.Queued, ID: "deadbeef", To: "r1"},
+	)
+
+	// Matched by original short SHA.
+	if !coveredByDone(st, "r1", git.CherryPickRecord{OrigSHA: full, NewSHA: "newsha1"}) {
+		t.Error("expected coverage by original short SHA")
+	}
+	// Matched by resulting SHA even when id is a PR number (no SHA match).
+	if !coveredByDone(st, "r2", git.CherryPickRecord{OrigSHA: "ffffffffffffffff", NewSHA: "prtip"}) {
+		t.Error("expected coverage by resulting new_sha")
+	}
+	// A queued-but-not-done pick is NOT covered (reconcile should surface it).
+	if coveredByDone(st, "r1", git.CherryPickRecord{OrigSHA: "deadbeefcccccccc", NewSHA: "other"}) {
+		t.Error("queued (not done) pick should not be considered covered")
+	}
+	// Unknown pick on the wrong branch is not covered.
+	if coveredByDone(st, "r1", git.CherryPickRecord{OrigSHA: "0123456789abcdef", NewSHA: "prtip"}) {
+		t.Error("new_sha match must be scoped to the same target branch")
+	}
+}

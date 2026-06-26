@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"unicode/utf8"
 
 	"github.com/fverse/berrypick/internal/config"
 	"github.com/fverse/berrypick/internal/git"
@@ -118,10 +119,10 @@ func renderMatrix(source string, m store.Matrix) {
 
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 2, 3, ' ', 0)
-	header := append([]string{"ID", "SUBJECT"}, m.Targets...)
+	header := append([]string{"#", "ID", "SUBJECT"}, m.Targets...)
 	fmt.Fprintln(tw, strings.Join(header, "\t"))
-	for _, row := range m.Rows {
-		cells := []string{row.ID, dash(row.Subject)}
+	for i, row := range m.Rows {
+		cells := []string{strconv.Itoa(i + 1), row.ID, dash(row.Subject)}
 		for _, t := range m.Targets {
 			cells = append(cells, cellMarker(row.Cells[t]))
 		}
@@ -130,10 +131,21 @@ func renderMatrix(source string, m store.Matrix) {
 	tw.Flush()
 
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+
+	// Width of the rule under the header: the widest laid-out line, so it spans
+	// the whole table regardless of which row is longest.
+	ruleWidth := 0
+	for _, line := range lines {
+		if w := utf8.RuneCountInString(line); w > ruleWidth {
+			ruleWidth = w
+		}
+	}
+
 	for i, line := range lines {
 		if i == 0 {
-			// Dim the header row so the data stands out.
+			// Dim the header row, then a horizontal rule beneath it.
 			fmt.Println(colorizeStream(os.Stdout, "90", line))
+			fmt.Println(colorizeStream(os.Stdout, "90", strings.Repeat("─", ruleWidth)))
 			continue
 		}
 		// Done green, pending todo yellow, untracked dim.

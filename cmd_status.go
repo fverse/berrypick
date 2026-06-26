@@ -53,7 +53,7 @@ func runStatus(branch string, asJSON, reconcile bool) error {
 	}
 
 	// Columns are the configured targets, narrowed to one when --branch is given.
-	targets := c.Targets()
+	targets := statusTargets(c, st)
 	if branch != "" {
 		targets = []string{branch}
 	}
@@ -68,6 +68,32 @@ func runStatus(branch string, asJSON, reconcile bool) error {
 	}
 	renderMatrix(c.Source(), m)
 	return nil
+}
+
+// statusTargets returns the matrix columns: every configured target in config
+// order, followed by any other branch that has pending or done activity in the
+// log. The trailing extras keep status consistent with `todo list` — a todo
+// queued for an unconfigured branch (e.g. via `todo add --to`) still shows up
+// instead of silently vanishing.
+func statusTargets(c *config.Config, st *store.State) []string {
+	order := c.Targets()
+	seen := map[string]bool{}
+	for _, t := range order {
+		seen[t] = true
+	}
+	add := func(to string) {
+		if to != "" && !seen[to] {
+			seen[to] = true
+			order = append(order, to)
+		}
+	}
+	for _, ev := range st.PendingTodos() {
+		add(ev.To)
+	}
+	for _, ev := range st.Done() {
+		add(ev.To)
+	}
+	return order
 }
 
 // renderMatrix prints the status matrix as an aligned table.

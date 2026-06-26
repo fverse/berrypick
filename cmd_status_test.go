@@ -1,11 +1,39 @@
 package main
 
 import (
+	"reflect"
 	"testing"
 
+	"github.com/fverse/berrypick/internal/config"
 	"github.com/fverse/berrypick/internal/git"
 	"github.com/fverse/berrypick/internal/store"
 )
+
+func TestStatusTargetsIncludesUnconfiguredTracked(t *testing.T) {
+	// Config declares release/2.0; a todo was queued for the unconfigured
+	// "develop" branch. status must still surface develop so it stays consistent
+	// with `todo list`, with configured targets kept first.
+	c := &config.Config{Branches: config.Branches{Source: "main", Targets: []string{"release/2.0"}}}
+	st := stateFrom(t,
+		store.Event{Event: store.Queued, ID: "a", To: "develop"},
+		store.Event{Event: store.Done, ID: "b", To: "release/2.0"},
+	)
+	got := statusTargets(c, st)
+	if want := []string{"release/2.0", "develop"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("statusTargets = %v, want %v (configured first, tracked extras appended)", got, want)
+	}
+}
+
+func TestStatusTargetsSkipsRemovedOnlyBranch(t *testing.T) {
+	// A branch whose only activity is a removed event has no pending/done state,
+	// so it should not become a column.
+	c := &config.Config{Branches: config.Branches{Source: "main", Targets: []string{"release/2.0"}}}
+	st := stateFrom(t, store.Event{Event: store.Removed, ID: "a", To: "old-branch"})
+	got := statusTargets(c, st)
+	if want := []string{"release/2.0"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("statusTargets = %v, want %v (removed-only branch excluded)", got, want)
+	}
+}
 
 func TestCellLabels(t *testing.T) {
 	cases := []struct {

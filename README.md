@@ -1,7 +1,19 @@
 # berrypick
 
-A CLI that cherry-picks commits from a **commit hash** or the commit that last changed a **`<file>:<line>`** or a **GitHub Pull
-Request** onto a fresh branch created off a target branch.
+**When the same change has to land on several long-lived branches, `berrypick`
+moves the work over and tracks where it still needs to go.** Teams that maintain
+more than one branch in parallel constantly re-apply the same commits by hand and
+lose track of which branches got which change. `berrypick` does the move for you
+and keeps a **shared, committed record** of what's been ported and what's still
+pending: queue the picks a branch needs, see an at-a-glance matrix of done versus
+todo across every branch, and have each pick record itself automatically — so
+nothing slips through and the whole team works from the same picture.
+[Jump to tracking →](#tracking-cherry-picks-across-branches)
+
+It does the cherry-picking. Point it at a **commit hash**, a
+**`<file>:<line>`** (the commit that last changed that line), or a **GitHub Pull
+Request**, and it cherry-picks the work onto a fresh branch off your target —
+recording the result as it goes.
 
 ## Install
 
@@ -105,6 +117,138 @@ berrypick internal/git/git.go:42 main --rev origin/main
 The line is blamed in your working tree by default; use `--rev <ref>` to blame a
 specific commit or branch. It fails clearly when the line is not committed yet,
 the line number is out of range, or the file is missing or untracked.
+
+## Tracking cherry-picks across branches
+
+For teams that back-port the same fixes onto several branches, `berrypick`
+can track what still needs picking and what's already done — in a **shared,
+committed** log so everyone sees the same picture.
+
+```sh
+berrypick init          # scaffold .berrypick/ (config.toml + log.jsonl)
+```
+
+This creates a `.berrypick/` directory at the repo root:
+
+```
+.berrypick/
+  config.toml     # hand-edited, committed: your branch topology
+  log.jsonl       # append-only event log, committed
+```
+
+**Commit both files.** The log is append-only (one line per event) precisely so
+two teammates recording picks the same day produce two lines, not a merge
+conflict.
+
+### `config.toml`
+
+Simple form — one source, many targets:
+
+```toml
+[branches]
+source  = "main"
+targets = ["release/2.0", "release/1.0"]
+```
+
+Advanced form — chained back-ports. If `[[flows]]` is present it wins over
+`[branches]`:
+
+```toml
+[[flows]]
+from = "main"
+to   = ["release/2.0"]
+
+[[flows]]
+from = "release/2.0"
+to   = ["release/1.0"]
+```
+
+Optional forge block (autodetected from the remote when omitted):
+
+```toml
+[forge]
+kind = "github"      # github | gitlab | ...
+host = "github.com"
+```
+
+A configured branch that doesn't exist yet only warns — you can write the config
+ahead of creating the branches.
+
+### Automatic recording
+
+Every successful `berrypick` cherry-pick (commit hash, PR URL, or `file:line`)
+**automatically** records a `done` event — no extra step. Picks use
+`git cherry-pick -x`, so the original SHA is stamped into the commit message
+(`cherry picked from commit …`), giving a git-native second source of truth.
+Recording is skipped silently if you haven't run `berrypick init`.
+
+### `berrypick todo`
+
+Track which picks still need to happen:
+
+```sh
+# Queue a change onto every configured target (or pass --to to pick branches)
+berrypick todo add a1b2c3d4
+berrypick todo add https://github.com/owner/repo/pull/123 --to release/2.0
+berrypick todo add internal/git/git.go:42
+
+berrypick todo list                     # grouped by target branch
+berrypick todo list --branch release/2.0
+berrypick todo list --json              # for scripting
+
+berrypick todo remove a1b2c3d4          # across all targets where it's queued
+berrypick todo remove a1b2c3d4 --to release/1.0
+```
+
+Each `(item, target)` pair is its own todo, so partial back-ports are trackable.
+Subject and author are resolved when you add, so the list reads well without
+re-fetching. Adding an already-queued or already-done pair is skipped, not
+double-added.
+
+### `berrypick status`
+
+Fold the log into a matrix — rows are tracked changes, columns are target
+branches:
+
+```sh
+berrypick status
+```
+
+```
+Cherry-pick status (source: main)
+
+ID         SUBJECT                release/2.0   release/1.0
+a1b2c3d4   Fix null deref         ✓ done        ⧗ todo
+e5f6a7b8   Patch CVE-2026-1234    ✓ done        ✓ done
+```
+
+| Cell     | Meaning                                     |
+| -------- | ------------------------------------------- |
+| `✓ done` | latest event for `(id, branch)` is **done** |
+| `⧗ todo` | latest event is **queued**                  |
+| `· -`    | not tracked for that branch                 |
+
+```sh
+berrypick status --branch release/2.0   # one column
+berrypick status --json                 # full matrix as JSON
+berrypick status --reconcile            # see below
+```
+
+`--reconcile` scans each target branch's history for `cherry picked from commit`
+(`-x`) annotations and surfaces picks made **outside** berrypick, offering to
+backfill `done` events for them. It's behind the flag so plain `status` stays
+fast.
+
+### `berrypick compact`
+
+```sh
+berrypick compact
+```
+
+Rewrites `log.jsonl` keeping only the latest event per `(id, target)` key, to
+bound growth. Derived state is unchanged. Because this rewrites the **shared**
+committed log, coordinate it like any shared-file rewrite (compact, commit, have
+teammates re-pull).
 
 ## GitHub access
 

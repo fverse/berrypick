@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -96,38 +97,63 @@ func statusTargets(c *config.Config, st *store.State) []string {
 	return order
 }
 
-// renderMatrix prints the status matrix as an aligned table.
+// Status cell markers. These are distinctive enough that colorizing them by
+// literal substitution after alignment won't collide with subject text.
+const (
+	markDone = "✓ done"
+	markTodo = "⧗ todo"
+	markNone = "· -"
+)
+
+// renderMatrix prints the status matrix as an aligned, colorized table. Color is
+// applied AFTER tabwriter computes the layout — ANSI codes inside a non-final
+// tabwriter cell throw off its column-width math, so the table is laid out plain
+// and then tinted line by line, leaving alignment identical with color on or off.
 func renderMatrix(source string, m store.Matrix) {
 	fmt.Printf("Cherry-pick status (source: %s)\n\n", source)
 	if len(m.Rows) == 0 {
 		fmt.Println("No tracked changes yet. Queue some with `berrypick todo add`.")
 		return
 	}
-	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 3, ' ', 0)
 
-	header := []string{"ID", "SUBJECT"}
-	header = append(header, m.Targets...)
+	var buf bytes.Buffer
+	tw := tabwriter.NewWriter(&buf, 0, 2, 3, ' ', 0)
+	header := append([]string{"ID", "SUBJECT"}, m.Targets...)
 	fmt.Fprintln(tw, strings.Join(header, "\t"))
-
 	for _, row := range m.Rows {
 		cells := []string{row.ID, dash(row.Subject)}
 		for _, t := range m.Targets {
-			cells = append(cells, cellLabel(row.Cells[t]))
+			cells = append(cells, cellMarker(row.Cells[t]))
 		}
 		fmt.Fprintln(tw, strings.Join(cells, "\t"))
 	}
 	tw.Flush()
+
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	for i, line := range lines {
+		if i == 0 {
+			// Dim the header row so the data stands out.
+			fmt.Println(colorizeStream(os.Stdout, "90", line))
+			continue
+		}
+		// Done green, pending todo yellow, untracked dim.
+		line = strings.ReplaceAll(line, markDone, colorizeStream(os.Stdout, "32", markDone))
+		line = strings.ReplaceAll(line, markTodo, colorizeStream(os.Stdout, "33", markTodo))
+		line = strings.ReplaceAll(line, markNone, colorizeStream(os.Stdout, "90", markNone))
+		fmt.Println(line)
+	}
 }
 
-// cellLabel renders a matrix cell for the terminal.
-func cellLabel(s store.CellState) string {
+// cellMarker returns the plain (uncolored) marker for a cell state; coloring
+// happens after layout in renderMatrix.
+func cellMarker(s store.CellState) string {
 	switch s {
 	case store.CellDone:
-		return "✓ done"
+		return markDone
 	case store.CellTodo:
-		return "⧗ todo"
+		return markTodo
 	default:
-		return "· -"
+		return markNone
 	}
 }
 

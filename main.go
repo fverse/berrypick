@@ -357,14 +357,21 @@ func baseLabel(target string, onOrigin bool) string {
 	return "local " + target
 }
 
+// streamIsTTY reports whether f is a color-capable terminal: a character device
+// with NO_COLOR unset. Used to keep piped or redirected output clean.
+func streamIsTTY(f *os.File) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
 // colorizeStream wraps s in the given ANSI SGR code, but only when the target
 // stream is a terminal and NO_COLOR is unset, so piped or redirected output
 // stays clean.
 func colorizeStream(f *os.File, code, s string) string {
-	if os.Getenv("NO_COLOR") != "" {
-		return s
-	}
-	if info, err := f.Stat(); err != nil || info.Mode()&os.ModeCharDevice == 0 {
+	if !streamIsTTY(f) {
 		return s
 	}
 	return "\033[" + code + "m" + s + "\033[0m"

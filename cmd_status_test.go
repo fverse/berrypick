@@ -35,19 +35,19 @@ func TestStatusTargetsSkipsRemovedOnlyBranch(t *testing.T) {
 	}
 }
 
-func TestCellLabels(t *testing.T) {
+func TestCellMarkersAndNames(t *testing.T) {
 	cases := []struct {
-		state store.CellState
-		label string
-		name  string
+		state  store.CellState
+		marker string
+		name   string
 	}{
 		{store.CellDone, "✓ done", "done"},
 		{store.CellTodo, "⧗ todo", "todo"},
 		{store.CellNone, "· -", "none"},
 	}
 	for _, c := range cases {
-		if got := cellLabel(c.state); got != c.label {
-			t.Errorf("cellLabel(%v) = %q, want %q", c.state, got, c.label)
+		if got := cellMarker(c.state); got != c.marker {
+			t.Errorf("cellMarker(%v) = %q, want %q", c.state, got, c.marker)
 		}
 		if got := cellName(c.state); got != c.name {
 			t.Errorf("cellName(%v) = %q, want %q", c.state, got, c.name)

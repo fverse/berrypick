@@ -3,12 +3,13 @@ module github.com/fverse/berrypick
 go 1.25.0
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/cli/go-gh/v2 v2.13.0
+	github.com/mattn/go-isatty v0.0.20
 	github.com/spf13/cobra v1.8.1
 )
 
 require (
-	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/cli/safeexec v1.0.0 // indirect
 	github.com/cli/shurcooL-graphql v0.0.4 // indirect
@@ -16,7 +17,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect

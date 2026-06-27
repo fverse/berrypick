@@ -43,7 +43,7 @@ func newRootCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:     "berrypick <commit-hash | PR-url | file:line> <target-branch> [branch-name]",
+		Use:     "berrypick <commit-hash | PR-url | file:line | :row> [target-branch] [branch-name]",
 		Version: version,
 		Short:   "Cherry-pick commits from a commit, GitHub PR, or blamed line onto a new branch",
 		Long: `berrypick creates a branch off <target-branch> and cherry-picks the
@@ -64,19 +64,26 @@ revision instead.
 By default the new branch is named cherry-pick/<first 8 chars of the SHA>, where
 the SHA is the commit hash for a commit, the PR's HEAD (tip) commit SHA for a PR,
 or the blamed commit's SHA for a <file>:<line> reference. Pass an optional third
-argument to name the branch yourself instead.`,
+argument to name the branch yourself instead.
+
+With .berrypick tracking set up (see "berrypick init"), two shortcuts apply: pass
+a ":N" row number from "berrypick status" in place of the source, and omit
+<target-branch> to cherry-pick onto the branch the change is queued for — you are
+asked to choose when it is queued for more than one.`,
 		Example: `  berrypick a1b2c3d4e5f6 release/1.2
   berrypick https://github.com/owner/repo/pull/123 main
   berrypick internal/git/git.go:42 main
-  berrypick a1b2c3d4e5f6 release/1.2 my-custom-branch`,
+  berrypick a1b2c3d4e5f6 release/1.2 my-custom-branch
+  berrypick :2                         # pick row 2 from "berrypick status"
+  berrypick a1b2c3d4e5f6               # pick a queued change onto its todo target`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Wrong number of arguments: print the error first, then usage,
 			// examples and flags (cmd.Usage omits the long description).
-			if len(args) < 2 || len(args) > 3 {
-				fmt.Fprintln(os.Stderr, red(fmt.Sprintf("error: requires 2 or 3 arguments: <commit-hash | PR-url | file:line> <target-branch> [branch-name] (got %d)", len(args))))
+			if len(args) < 1 || len(args) > 3 {
+				fmt.Fprintln(os.Stderr, red(fmt.Sprintf("error: requires 1 to 3 arguments: <commit-hash | PR-url | file:line | :row> [target-branch] [branch-name] (got %d)", len(args))))
 				fmt.Fprintln(os.Stderr)
 				_ = cmd.Usage()
 				return errReported
@@ -84,11 +91,7 @@ argument to name the branch yourself instead.`,
 			if deleteLocal && !push {
 				return fmt.Errorf("--delete-local requires --push (the local branch is only deleted after a successful push)")
 			}
-			branchName := ""
-			if len(args) == 3 {
-				branchName = args[2]
-			}
-			return run(args[0], args[1], branchName, options{push: push, force: force, mainline: mainline, deleteLocal: deleteLocal, rev: rev})
+			return runPick(args, options{push: push, force: force, mainline: mainline, deleteLocal: deleteLocal, rev: rev})
 		},
 	}
 

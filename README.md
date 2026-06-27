@@ -174,14 +174,6 @@ host = "github.com"
 A configured branch that doesn't exist yet only warns — you can write the config
 ahead of creating the branches.
 
-### Automatic recording
-
-Every successful `berrypick` cherry-pick (commit hash, PR URL, or `file:line`)
-**automatically** records a `done` event — no extra step. Picks use
-`git cherry-pick -x`, so the original SHA is stamped into the commit message
-(`cherry picked from commit …`), giving a git-native second source of truth.
-Recording is skipped silently if you haven't run `berrypick init`.
-
 ### `berrypick todo`
 
 Track which picks still need to happen:
@@ -217,9 +209,10 @@ berrypick status
 ```
 Cherry-pick status (source: main)
 
-ID         SUBJECT                release/2.0   release/1.0
-a1b2c3d4   Fix null deref         ✓ done        ⧗ todo
-e5f6a7b8   Patch CVE-2026-1234    ✓ done        ✓ done
+#   ID         SUBJECT                release/2.0   release/1.0
+─────────────────────────────────────────────────────────────────
+1   a1b2c3d4   Fix null deref         ✓ done        ⧗ todo
+2   e5f6a7b8   Patch CVE-2026-1234    ✓ done        ✓ done
 ```
 
 | Cell     | Meaning                                     |
@@ -227,6 +220,8 @@ e5f6a7b8   Patch CVE-2026-1234    ✓ done        ✓ done
 | `✓ done` | latest event for `(id, branch)` is **done** |
 | `⧗ todo` | latest event is **queued**                  |
 | `· -`    | not tracked for that branch                 |
+
+The `#` column gives each row a number you can pick by (see below).
 
 ```sh
 berrypick status --branch release/2.0   # one column
@@ -238,6 +233,27 @@ berrypick status --reconcile            # see below
 (`-x`) annotations and surfaces picks made **outside** berrypick, offering to
 backfill `done` events for them. It's behind the flag so plain `status` stays
 fast.
+
+### Cherry-picking straight from a todo
+
+Once a change is queued, you can pick it without retyping the SHA and target. The
+ordinary `berrypick` command gains two tracking shortcuts:
+
+```sh
+berrypick :2            # pick row #2 from `berrypick status`
+berrypick a1b2c3d4      # pick a queued change onto the branch it's queued for
+```
+
+- A **`:N`** argument refers to row `N` in `berrypick status` (the leading colon
+  keeps it distinct from a commit hash). Row numbers are positional — they shift
+  as todos are added or completed, so they mean "the list I'm looking at now,"
+  not a stable id.
+- The **target branch is optional**: when the change is queued for exactly one
+  branch, that branch is used; when it's queued for several, you're asked which
+  (or pass the branch explicitly, e.g. `berrypick :2 release/1.0`).
+
+The pick runs the normal cherry-pick flow, so it records the `done` event
+automatically — the todo flips from `⧗ todo` to `✓ done`.
 
 ### `berrypick compact`
 
